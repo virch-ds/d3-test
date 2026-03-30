@@ -222,8 +222,10 @@
 
       const nodeW = 170;
       const nodeH = 56;
-      const levelGap = 340; // Увеличенный интервал между слоями уровней.
+      const levelGap = 260;
       const rowGap = 28;
+      const laneGap = 12;
+      const topLanes = links.length + 2;
 
       const levels = d3.group(nodes, (d) => d.level);
       const levelKeys = Array.from(levels.keys()).sort((a, b) => a - b);
@@ -231,7 +233,7 @@
       const maxRows = d3.max(levelKeys.map((k) => levels.get(k).length)) || 1;
 
       const margin = {
-        top: 50,
+        top: 30 + topLanes * laneGap,
         right: 80,
         bottom: 50,
         left: 40
@@ -300,6 +302,8 @@
           .attr("fill", color(parentId));
       });
 
+      const laneY = (laneIndex) => margin.top - 16 - laneIndex * laneGap;
+
       // Стабильный порядок для трассировки, чтобы форма была предсказуемой.
       const linksSorted = links
         .slice()
@@ -307,50 +311,6 @@
           d3.ascending(a.source, b.source) ||
           d3.ascending(nodeById.get(a.target).y, nodeById.get(b.target).y)
         );
-
-      // Уникальный X подхода к цели для входящих в одну и ту же ноду:
-      // это убирает наложение вертикальных "опусканий" у цели.
-      const approachXByLinkId = new Map();
-      const incomingByTarget = d3.group(linksSorted, (d) => d.target);
-      for (const [targetId, incoming] of incomingByTarget.entries()) {
-        const targetX = nodeById.get(targetId).x;
-        incoming
-          .slice()
-          .sort((a, b) => d3.ascending(a.source, b.source))
-          .forEach((link, idx) => {
-            approachXByLinkId.set(link.id, targetX - 18 - idx * 10);
-          });
-      }
-
-      const rowStep = nodeH + rowGap;
-      const toRowIndex = (y) => {
-        const idx = Math.round((y - margin.top - nodeH / 2) / rowStep);
-        return Math.max(0, Math.min(maxRows - 1, idx));
-      };
-      const gapCenterY = (gapIdx) => margin.top + gapIdx * rowStep + nodeH + rowGap / 2;
-
-      // Выбор маршрута по Y:
-      // если цель ниже — линия идет вниз, если выше — вверх (без принудительного ухода наверх).
-      function pickRouteY(sourceY, targetY, linkIndex) {
-        const sRow = toRowIndex(sourceY);
-        const tRow = toRowIndex(targetY);
-
-        if (tRow > sRow) {
-          const gapIdx = Math.max(sRow, tRow - 1);
-          return gapCenterY(gapIdx);
-        }
-
-        if (tRow < sRow) {
-          const gapIdx = Math.min(sRow - 1, tRow);
-          return gapCenterY(gapIdx);
-        }
-
-        // Если в одной строке, требуется небольшой обход: чередуем вверх/вниз.
-        const below = sRow <= maxRows - 2 ? gapCenterY(sRow) : null;
-        const above = sRow > 0 ? gapCenterY(sRow - 1) : null;
-        const preferBelow = linkIndex % 2 === 0;
-        return preferBelow ? (below ?? above ?? sourceY) : (above ?? below ?? sourceY);
-      }
 
       root
         .append("g")
@@ -371,13 +331,13 @@
           const ty = t.y + nodeH / 2;
 
           const busX = parentBusX.get(d.source) || sx + 20;
-          const preTargetX = approachXByLinkId.get(d.id) || tx - 18;
-          const routeY = pickRouteY(sy, ty, i);
+          const preTargetX = tx - 16;
+          const routeY = laneY(i);
 
           // Ортогональная трасса в 5 отрезков:
           // 1) к родительской магистрали (busX),
-          // 2) по Y в сторону цели,
-          // 3) горизонталь в межстрочном коридоре,
+          // 2) вверх в коридор,
+          // 3) горизонталь по коридору,
           // 4) вниз к цели,
           // 5) короткий вход в ноду-цель.
           return [
