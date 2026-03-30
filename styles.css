@@ -1,0 +1,117 @@
+.layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 440px) 1fr;
+  gap: 16px;
+  min-height: 100vh;
+  padding: 16px;
+  box-sizing: border-box;
+  font-family: Arial, sans-serif;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  box-sizing: border-box;
+  border: 1px solid #c7cfdb;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+button {
+  width: fit-content;
+  border: none;
+  background: #1f6feb;
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #1656b8;
+}
+
+.hint {
+  margin: 8px 0 0;
+  color: #4f5b72;
+  font-size: 12px;
+}
+
+.message {
+  min-height: 18px;
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.message.error {
+  color: #b00020;
+}
+
+.message.ok {
+  color: #1f7a1f;
+}
+
+.canvas-wrap {
+  overflow: auto;
+  border: 1px solid #dde3ed;
+  border-radius: 10px;
+  background: #fff;
+  min-height: 640px;
+}
+
+.chart-root {
+  display: block;
+}
+
+.node-card {
+  fill: #f7faff;
+  stroke: #7f8aa5;
+  stroke-width: 1;
+  rx: 7;
+  ry: 7;
+}
+
+.node-title {
+  fill: #17233a;
+  font-size: 12px;
+  font-weight: 600;
+  dominant-baseline: middle;
+}
+
+.node-meta {
+  fill: #4f5b72;
+  font-size: 11px;
+  dominant-baseline: middle;
+}
+
+.edge-label {
+  font-size: 11px;
+  fill: #3c465d;
+  dominant-baseline: middle;
+  text-anchor: middle;
+}
+
+.tag-critical .node-card {
+  fill: #ffe4e8;
+  stroke: #cc2f47;
+}
+
+.tag-foreign .node-card {
+  fill: #e8f5ff;
+  stroke: #247ea6;
+}

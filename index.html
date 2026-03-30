@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>D3 Ownership Scheme</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  </head>
+  <body>
+    <main class="layout">
+      <section class="panel">
+        <h1>Динамичная схема владения</h1>
+
+        <label for="dataInput">Связи (JSON, 1 запись = 1 связь)</label>
+        <textarea id="dataInput" spellcheck="false"></textarea>
+        <button id="renderButton" type="button">Построить схему</button>
+
+        <label for="tagStylesInput">Стили меток нод (JSON)</label>
+        <textarea id="tagStylesInput" spellcheck="false"></textarea>
+        <button id="applyStylesButton" type="button">Применить стили меток</button>
+
+        <p class="hint">
+          Поддерживаются ключи как на английском (<code>owner_id</code>,
+          <code>organization_id</code>, <code>organization_level</code>,
+          <code>share</code>), так и на русском (<code>id_владельца</code>,
+          <code>id_организации</code>, <code>level_организации</code>,
+          <code>доля_владения</code>).
+        </p>
+        <p id="message" class="message"></p>
+      </section>
+
+      <section class="canvas-wrap">
+        <div id="chart"></div>
+      </section>
+    </main>
+
+    <script type="module" src="./ownership-graph.js"></script>
+  </body>
+</html>
