@@ -310,6 +310,50 @@
           d3.ascending(nodeById.get(a.target).y, nodeById.get(b.target).y)
         );
 
+      // Уникальный X подхода к цели для входящих в одну и ту же ноду:
+      // это убирает наложение вертикальных "опусканий" у цели.
+      const approachXByLinkId = new Map();
+      const incomingByTarget = d3.group(linksSorted, (d) => d.target);
+      for (const [targetId, incoming] of incomingByTarget.entries()) {
+        const targetX = nodeById.get(targetId).x;
+        incoming
+          .slice()
+          .sort((a, b) => d3.ascending(a.source, b.source))
+          .forEach((link, idx) => {
+            approachXByLinkId.set(link.id, targetX - 18 - idx * 10);
+          });
+      }
+
+      const rowStep = nodeH + rowGap;
+      const toRowIndex = (y) => {
+        const idx = Math.round((y - margin.top - nodeH / 2) / rowStep);
+        return Math.max(0, Math.min(maxRows - 1, idx));
+      };
+      const gapCenterY = (gapIdx) => margin.top + gapIdx * rowStep + nodeH + rowGap / 2;
+
+      // Выбор маршрута по Y:
+      // если цель ниже — линия идет вниз, если выше — вверх (без принудительного ухода наверх).
+      function pickRouteY(sourceY, targetY, linkIndex) {
+        const sRow = toRowIndex(sourceY);
+        const tRow = toRowIndex(targetY);
+
+        if (tRow > sRow) {
+          const gapIdx = Math.max(sRow, tRow - 1);
+          return gapCenterY(gapIdx);
+        }
+
+        if (tRow < sRow) {
+          const gapIdx = Math.min(sRow - 1, tRow);
+          return gapCenterY(gapIdx);
+        }
+
+        // Если в одной строке, требуется небольшой обход: чередуем вверх/вниз.
+        const below = sRow <= maxRows - 2 ? gapCenterY(sRow) : null;
+        const above = sRow > 0 ? gapCenterY(sRow - 1) : null;
+        const preferBelow = linkIndex % 2 === 0;
+        return preferBelow ? (below ?? above ?? sourceY) : (above ?? below ?? sourceY);
+      }
+
       root
         .append("g")
         .selectAll("path")
