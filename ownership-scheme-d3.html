@@ -104,7 +104,9 @@
     <h1>Схема владения (D3.js, 1 файл)</h1>
     <p class="hint">
       Ноды идут слева направо по <b>level_организации</b>. Линки ортогональные, с цветом по родителю и стрелками.
-      Для каждого родителя выделена уникальная X-координата вертикальной магистрали. Метки в поле <b>флаги</b> меняют стиль нод.
+      Поддержаны кейсы: у одной компании несколько владельцев и связи через пропуск уровней (например 0 → 2).
+      Для входа в ноду используются 5 портов на левой стороне (входящие связи распределяются по портам).
+      Метки в поле <b>флаги</b> меняют стиль нод.
     </p>
     <div id="chart"></div>
     <div class="legend">
@@ -120,16 +122,16 @@
     // Тестовые данные: 10 записей, 1 запись = 1 связь.
     // Формат: id_владельца, id_организации, level_организации, доля_владения, флаги.
     const testData = [
-      { id_владельца: "HOLDING_A", id_организации: "ORG_B", level_организации: 1, доля_владения: 60, флаги: ["state"] },
-      { id_владельца: "HOLDING_A", id_организации: "ORG_C", level_организации: 1, доля_владения: 40, флаги: ["public"] },
-      { id_владельца: "ORG_B", id_организации: "ORG_D", level_организации: 2, доля_владения: 51, флаги: ["bank"] },
-      { id_владельца: "ORG_B", id_организации: "ORG_E", level_организации: 2, доля_владения: 49, флаги: ["offshore"] },
-      { id_владельца: "ORG_C", id_организации: "ORG_F", level_организации: 2, доля_владения: 70, флаги: ["public"] },
-      { id_владельца: "ORG_C", id_организации: "ORG_G", level_организации: 2, доля_владения: 30, флаги: ["sanctioned"] },
-      { id_владельца: "ORG_D", id_организации: "ORG_H", level_организации: 3, доля_владения: 100, флаги: ["bank"] },
-      { id_владельца: "ORG_E", id_организации: "ORG_I", level_организации: 3, доля_владения: 75, флаги: ["offshore"] },
-      { id_владельца: "ORG_F", id_организации: "ORG_J", level_организации: 3, доля_владения: 55, флаги: ["public"] },
-      { id_владельца: "ORG_G", id_организации: "ORG_K", level_организации: 3, доля_владения: 25, флаги: ["sanctioned", "offshore"] }
+      { id_владельца: "HOLDING_A", id_организации: "ORG_B", level_организации: 1, доля_владения: 55, флаги: ["state"] },
+      { id_владельца: "HOLDING_A", id_организации: "ORG_C", level_организации: 1, доля_владения: 45, флаги: ["public"] },
+      { id_владельца: "ORG_B", id_организации: "ORG_D", level_организации: 2, доля_владения: 60, флаги: ["bank"] },
+      { id_владельца: "ORG_C", id_организации: "ORG_D", level_организации: 2, доля_владения: 30, флаги: ["bank", "public"] },
+      { id_владельца: "HOLDING_X", id_организации: "ORG_D", level_организации: 2, доля_владения: 10, флаги: ["bank", "sanctioned"] },
+      { id_владельца: "HOLDING_A", id_организации: "ORG_E", level_организации: 2, доля_владения: 35, флаги: ["offshore"] },
+      { id_владельца: "ORG_B", id_организации: "ORG_E", level_организации: 2, доля_владения: 65, флаги: ["offshore"] },
+      { id_владельца: "ORG_D", id_организации: "ORG_F", level_организации: 3, доля_владения: 70, флаги: ["public"] },
+      { id_владельца: "HOLDING_X", id_организации: "ORG_C", level_организации: 1, доля_владения: 50, флаги: ["public"] },
+      { id_владельца: "HOLDING_X", id_организации: "ORG_F", level_организации: 3, доля_владения: 15, флаги: ["public", "sanctioned"] }
     ];
 
     const LABEL_STYLES = {
@@ -163,7 +165,7 @@
       rows.forEach((row) => {
         const owner = ensureNode(row.id_владельца);
         const org = ensureNode(row.id_организации);
-        org.level = row.level_организации;
+        org.level = org.level === undefined ? row.level_организации : Math.min(org.level, row.level_организации);
         (row.флаги || []).forEach((tag) => org.labels.add(tag));
         owner.outgoing = (owner.outgoing || 0) + 1;
       });
@@ -222,23 +224,25 @@
 
       const nodeW = 170;
       const nodeH = 56;
-      const levelGap = 340; // Увеличенный интервал между слоями уровней.
+      const levelGap = 340;
       const rowGap = 28;
+      const PORT_COUNT = 5;
+      const PORT_OFFSETS = d3.range(PORT_COUNT).map((i) => ((i + 1) / (PORT_COUNT + 1)) * nodeH);
 
       const levels = d3.group(nodes, (d) => d.level);
       const levelKeys = Array.from(levels.keys()).sort((a, b) => a - b);
       const maxLevel = d3.max(levelKeys) || 0;
-      const maxRows = d3.max(levelKeys.map((k) => levels.get(k).length)) || 1;
+      const totalRows = Math.max(1, nodes.length);
 
       const margin = {
-        top: 50,
+        top: 40,
         right: 80,
         bottom: 50,
         left: 40
       };
 
       const width = margin.left + margin.right + (maxLevel + 1) * levelGap + nodeW;
-      const height = margin.top + margin.bottom + maxRows * (nodeH + rowGap);
+      const height = margin.top + margin.bottom + totalRows * (nodeH + rowGap);
 
       const svg = chart
         .append("svg")
@@ -249,14 +253,29 @@
 
       const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
-      // Раскладка нод по уровням (x зависит от level, y варьируется в рамках колонки).
-      levelKeys.forEach((level) => {
-        const list = levels.get(level).sort((a, b) => d3.ascending(a.id, b.id));
-        list.forEach((node, i) => {
-          node.x = margin.left + level * levelGap;
-          node.y = margin.top + i * (nodeH + rowGap);
+      // Раскладка нод:
+      // x зависит от level.
+      // y даем глобально уникальный (интерливинг по уровням), чтобы:
+      // 1) уровни не "сползали" каскадом вниз,
+      // 2) при пропуске уровней горизонтали не пересекали чужие ноды.
+      const levelNodeLists = new Map(
+        levelKeys.map((lvl) => [lvl, levels.get(lvl).slice().sort((a, b) => d3.ascending(a.id, b.id))])
+      );
+      let slot = 0;
+      let rowIdx = 0;
+      let hasItems = true;
+      while (hasItems) {
+        hasItems = false;
+        levelKeys.forEach((lvl) => {
+          const node = levelNodeLists.get(lvl)[rowIdx];
+          if (!node) return;
+          hasItems = true;
+          node.x = margin.left + node.level * levelGap;
+          node.y = margin.top + slot * (nodeH + rowGap);
+          slot += 1;
         });
-      });
+        rowIdx += 1;
+      }
 
       const parentsByLevel = d3.group(
         links.map((l) => l.source),
@@ -307,50 +326,53 @@
           d3.ascending(a.source, b.source) ||
           d3.ascending(nodeById.get(a.target).y, nodeById.get(b.target).y)
         );
+      function choosePortIndexes(count) {
+        if (count <= 0) return [];
+        if (count === 1) return [2];
+        if (count === 2) return [1, 3];
+        if (count === 3) return [0, 2, 4];
+        if (count === 4) return [0, 1, 3, 4];
+        if (count === 5) return [0, 1, 2, 3, 4];
 
-      // Уникальный X подхода к цели для входящих в одну и ту же ноду:
-      // это убирает наложение вертикальных "опусканий" у цели.
-      const approachXByLinkId = new Map();
+        // Если связей больше 5, используем "пилу", чтобы равномернее повторять порты.
+        const saw = [0, 1, 2, 3, 4, 3, 2, 1];
+        return d3.range(count).map((i) => saw[i % saw.length]);
+      }
+
+      // Каждому входящему линку назначаем один из 5 портов на левой грани целевой ноды.
+      const targetPortYByLinkId = new Map();
       const incomingByTarget = d3.group(linksSorted, (d) => d.target);
       for (const [targetId, incoming] of incomingByTarget.entries()) {
-        const targetX = nodeById.get(targetId).x;
-        incoming
+        const targetNode = nodeById.get(targetId);
+        const orderedIncoming = incoming
           .slice()
-          .sort((a, b) => d3.ascending(a.source, b.source))
-          .forEach((link, idx) => {
-            approachXByLinkId.set(link.id, targetX - 18 - idx * 10);
-          });
+          .sort(
+            (a, b) =>
+              d3.ascending(nodeById.get(a.source).y, nodeById.get(b.source).y) ||
+              d3.ascending(a.source, b.source)
+          );
+        const portIndexes = choosePortIndexes(orderedIncoming.length);
+        orderedIncoming.forEach((link, idx) => {
+          const portIndex = portIndexes[idx];
+          targetPortYByLinkId.set(link.id, targetNode.y + PORT_OFFSETS[portIndex]);
+        });
       }
 
-      const rowStep = nodeH + rowGap;
-      const toRowIndex = (y) => {
-        const idx = Math.round((y - margin.top - nodeH / 2) / rowStep);
-        return Math.max(0, Math.min(maxRows - 1, idx));
-      };
-      const gapCenterY = (gapIdx) => margin.top + gapIdx * rowStep + nodeH + rowGap / 2;
-
-      // Выбор маршрута по Y:
-      // если цель ниже — линия идет вниз, если выше — вверх (без принудительного ухода наверх).
-      function pickRouteY(sourceY, targetY, linkIndex) {
-        const sRow = toRowIndex(sourceY);
-        const tRow = toRowIndex(targetY);
-
-        if (tRow > sRow) {
-          const gapIdx = Math.max(sRow, tRow - 1);
-          return gapCenterY(gapIdx);
-        }
-
-        if (tRow < sRow) {
-          const gapIdx = Math.min(sRow - 1, tRow);
-          return gapCenterY(gapIdx);
-        }
-
-        // Если в одной строке, требуется небольшой обход: чередуем вверх/вниз.
-        const below = sRow <= maxRows - 2 ? gapCenterY(sRow) : null;
-        const above = sRow > 0 ? gapCenterY(sRow - 1) : null;
-        const preferBelow = linkIndex % 2 === 0;
-        return preferBelow ? (below ?? above ?? sourceY) : (above ?? below ?? sourceY);
+      function buildRoute(link) {
+        const s = nodeById.get(link.source);
+        const t = nodeById.get(link.target);
+        const sx = s.x + nodeW;
+        const sy = s.y + nodeH / 2;
+        const tx = t.x;
+        const ty = targetPortYByLinkId.get(link.id) ?? t.y + nodeH / 2;
+        const busX = parentBusX.get(link.source) || sx + 20;
+        return { sx, sy, busX, tx, ty };
       }
+
+      const routeByLinkId = new Map();
+      linksSorted.forEach((link) => {
+        routeByLinkId.set(link.id, buildRoute(link));
+      });
 
       root
         .append("g")
@@ -361,34 +383,80 @@
         .attr("stroke", (d) => color(d.source))
         .attr("stroke-width", 2)
         .attr("marker-end", (d) => `url(#arrow_${d.source.replace(/[^a-zA-Z0-9_-]/g, "_")})`)
-        .attr("d", (d, i) => {
-          const s = nodeById.get(d.source);
-          const t = nodeById.get(d.target);
-
-          const sx = s.x + nodeW;
-          const sy = s.y + nodeH / 2;
-          const tx = t.x;
-          const ty = t.y + nodeH / 2;
-
-          const busX = parentBusX.get(d.source) || sx + 20;
-          const preTargetX = approachXByLinkId.get(d.id) || tx - 18;
-          const routeY = pickRouteY(sy, ty, i);
-
-          // Ортогональная трасса в 5 отрезков:
-          // 1) к родительской магистрали (busX),
-          // 2) по Y в сторону цели,
-          // 3) горизонталь в межстрочном коридоре,
-          // 4) вниз к цели,
-          // 5) короткий вход в ноду-цель.
+        .attr("d", (d) => {
+          const { sx, sy, busX, tx, ty } = routeByLinkId.get(d.id);
+          // Ортогональная трасса с 2 изломами:
+          // 1) излом напротив выхода,
+          // 2) излом напротив входа.
           return [
             `M${sx},${sy}`,
             `L${busX},${sy}`,
-            `L${busX},${routeY}`,
-            `L${preTargetX},${routeY}`,
-            `L${preTargetX},${ty}`,
+            `L${busX},${ty}`,
             `L${tx},${ty}`
           ].join(" ");
         });
+
+      // Рендер "мостиков" на пересечениях:
+      // горизонтальный сегмент визуально проходит поверх вертикального.
+      const horizontalSegments = [];
+      const verticalSegments = [];
+      linksSorted.forEach((link) => {
+        const r = routeByLinkId.get(link.id);
+        const stroke = color(link.source);
+        horizontalSegments.push({ linkId: link.id, y: r.sy, x1: r.sx, x2: r.busX, stroke });
+        horizontalSegments.push({ linkId: link.id, y: r.ty, x1: r.busX, x2: r.tx, stroke });
+        verticalSegments.push({ linkId: link.id, x: r.busX, y1: r.sy, y2: r.ty });
+      });
+
+      const eps = 0.5;
+      const bridgeHalf = 5;
+      const bridges = [];
+      const bridgeKeys = new Set();
+      horizontalSegments.forEach((h) => {
+        const hMinX = Math.min(h.x1, h.x2);
+        const hMaxX = Math.max(h.x1, h.x2);
+        verticalSegments.forEach((v) => {
+          if (h.linkId === v.linkId) return;
+          const vMinY = Math.min(v.y1, v.y2);
+          const vMaxY = Math.max(v.y1, v.y2);
+          const crossX = v.x;
+          const crossY = h.y;
+          const insideHorizontal = crossX > hMinX + eps && crossX < hMaxX - eps;
+          const insideVertical = crossY > vMinY + eps && crossY < vMaxY - eps;
+          if (!insideHorizontal || !insideVertical) return;
+          const key = `${Math.round(crossX)}:${Math.round(crossY)}:${h.stroke}`;
+          if (bridgeKeys.has(key)) return;
+          bridgeKeys.add(key);
+          bridges.push({ x: crossX, y: crossY, stroke: h.stroke });
+        });
+      });
+
+      const bridgeG = root.append("g").attr("pointer-events", "none");
+      bridgeG
+        .selectAll("line.bridge-clear")
+        .data(bridges)
+        .join("line")
+        .attr("class", "bridge-clear")
+        .attr("x1", (d) => d.x - bridgeHalf)
+        .attr("x2", (d) => d.x + bridgeHalf)
+        .attr("y1", (d) => d.y)
+        .attr("y2", (d) => d.y)
+        .attr("stroke", "#ffffff")
+        .attr("stroke-width", 6)
+        .attr("stroke-linecap", "round");
+
+      bridgeG
+        .selectAll("line.bridge-top")
+        .data(bridges)
+        .join("line")
+        .attr("class", "bridge-top")
+        .attr("x1", (d) => d.x - bridgeHalf)
+        .attr("x2", (d) => d.x + bridgeHalf)
+        .attr("y1", (d) => d.y)
+        .attr("y2", (d) => d.y)
+        .attr("stroke", (d) => d.stroke)
+        .attr("stroke-width", 2.3)
+        .attr("stroke-linecap", "round");
 
       root
         .append("g")
@@ -397,7 +465,7 @@
         .join("text")
         .attr("class", "link-share")
         .attr("x", (d) => nodeById.get(d.target).x - 48)
-        .attr("y", (d) => nodeById.get(d.target).y + nodeH / 2 - 6)
+        .attr("y", (d) => (targetPortYByLinkId.get(d.id) ?? nodeById.get(d.target).y + nodeH / 2) - 6)
         .text((d) => `${d.share}%`);
 
       const nodeG = root
@@ -417,6 +485,17 @@
         .attr("stroke", (d) => computeNodeStyle(d.labels).stroke)
         .attr("stroke-width", 1.5)
         .attr("stroke-dasharray", (d) => computeNodeStyle(d.labels).dash);
+
+      // Показываем 5 фиксированных входных портов на левой грани ноды.
+      nodeG
+        .append("g")
+        .selectAll("circle")
+        .data(PORT_OFFSETS)
+        .join("circle")
+        .attr("cx", 0)
+        .attr("cy", (d) => d)
+        .attr("r", 2)
+        .attr("fill", "#94a3b8");
 
       nodeG
         .append("text")
