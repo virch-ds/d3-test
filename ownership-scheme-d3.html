@@ -104,7 +104,8 @@
     <h1>Схема владения (D3.js, 1 файл)</h1>
     <p class="hint">
       Ноды идут слева направо по <b>level_организации</b>. Линки ортогональные, с цветом по родителю и стрелками.
-      Для каждого родителя выделена уникальная X-координата вертикальной магистрали. Метки в поле <b>флаги</b> меняют стиль нод.
+      Поддержаны кейсы: у одной компании несколько владельцев и связи через пропуск уровней (например 0 → 2).
+      Метки в поле <b>флаги</b> меняют стиль нод.
     </p>
     <div id="chart"></div>
     <div class="legend">
@@ -120,16 +121,16 @@
     // Тестовые данные: 10 записей, 1 запись = 1 связь.
     // Формат: id_владельца, id_организации, level_организации, доля_владения, флаги.
     const testData = [
-      { id_владельца: "HOLDING_A", id_организации: "ORG_B", level_организации: 1, доля_владения: 60, флаги: ["state"] },
-      { id_владельца: "HOLDING_A", id_организации: "ORG_C", level_организации: 1, доля_владения: 40, флаги: ["public"] },
-      { id_владельца: "ORG_B", id_организации: "ORG_D", level_организации: 2, доля_владения: 51, флаги: ["bank"] },
-      { id_владельца: "ORG_B", id_организации: "ORG_E", level_организации: 2, доля_владения: 49, флаги: ["offshore"] },
-      { id_владельца: "ORG_C", id_организации: "ORG_F", level_организации: 2, доля_владения: 70, флаги: ["public"] },
-      { id_владельца: "ORG_C", id_организации: "ORG_G", level_организации: 2, доля_владения: 30, флаги: ["sanctioned"] },
-      { id_владельца: "ORG_D", id_организации: "ORG_H", level_организации: 3, доля_владения: 100, флаги: ["bank"] },
-      { id_владельца: "ORG_E", id_организации: "ORG_I", level_организации: 3, доля_владения: 75, флаги: ["offshore"] },
-      { id_владельца: "ORG_F", id_организации: "ORG_J", level_организации: 3, доля_владения: 55, флаги: ["public"] },
-      { id_владельца: "ORG_G", id_организации: "ORG_K", level_организации: 3, доля_владения: 25, флаги: ["sanctioned", "offshore"] }
+      { id_владельца: "HOLDING_A", id_организации: "ORG_B", level_организации: 1, доля_владения: 55, флаги: ["state"] },
+      { id_владельца: "HOLDING_A", id_организации: "ORG_C", level_организации: 1, доля_владения: 45, флаги: ["public"] },
+      { id_владельца: "ORG_B", id_организации: "ORG_D", level_организации: 2, доля_владения: 60, флаги: ["bank"] },
+      { id_владельца: "ORG_C", id_организации: "ORG_D", level_организации: 2, доля_владения: 30, флаги: ["bank", "public"] },
+      { id_владельца: "HOLDING_X", id_организации: "ORG_D", level_организации: 2, доля_владения: 10, флаги: ["bank", "sanctioned"] },
+      { id_владельца: "HOLDING_A", id_организации: "ORG_E", level_организации: 2, доля_владения: 35, флаги: ["offshore"] },
+      { id_владельца: "ORG_B", id_организации: "ORG_E", level_организации: 2, доля_владения: 65, флаги: ["offshore"] },
+      { id_владельца: "ORG_D", id_организации: "ORG_F", level_организации: 3, доля_владения: 70, флаги: ["public"] },
+      { id_владельца: "HOLDING_X", id_организации: "ORG_C", level_организации: 1, доля_владения: 50, флаги: ["public"] },
+      { id_владельца: "HOLDING_X", id_организации: "ORG_F", level_организации: 3, доля_владения: 15, флаги: ["public", "sanctioned"] }
     ];
 
     const LABEL_STYLES = {
@@ -163,7 +164,7 @@
       rows.forEach((row) => {
         const owner = ensureNode(row.id_владельца);
         const org = ensureNode(row.id_организации);
-        org.level = row.level_организации;
+        org.level = org.level === undefined ? row.level_организации : Math.min(org.level, row.level_организации);
         (row.флаги || []).forEach((tag) => org.labels.add(tag));
         owner.outgoing = (owner.outgoing || 0) + 1;
       });
@@ -222,25 +223,23 @@
 
       const nodeW = 170;
       const nodeH = 56;
-      const levelGap = 260;
+      const levelGap = 340;
       const rowGap = 28;
-      const laneGap = 12;
-      const topLanes = links.length + 2;
 
       const levels = d3.group(nodes, (d) => d.level);
       const levelKeys = Array.from(levels.keys()).sort((a, b) => a - b);
       const maxLevel = d3.max(levelKeys) || 0;
-      const maxRows = d3.max(levelKeys.map((k) => levels.get(k).length)) || 1;
+      const totalRows = Math.max(1, nodes.length);
 
       const margin = {
-        top: 30 + topLanes * laneGap,
+        top: 40,
         right: 80,
         bottom: 50,
         left: 40
       };
 
       const width = margin.left + margin.right + (maxLevel + 1) * levelGap + nodeW;
-      const height = margin.top + margin.bottom + maxRows * (nodeH + rowGap);
+      const height = margin.top + margin.bottom + totalRows * (nodeH + rowGap);
 
       const svg = chart
         .append("svg")
@@ -251,13 +250,14 @@
 
       const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
-      // Раскладка нод по уровням (x зависит от level, y варьируется в рамках колонки).
-      levelKeys.forEach((level) => {
-        const list = levels.get(level).sort((a, b) => d3.ascending(a.id, b.id));
-        list.forEach((node, i) => {
-          node.x = margin.left + level * levelGap;
-          node.y = margin.top + i * (nodeH + rowGap);
-        });
+      // Раскладка нод:
+      // x зависит от level, а y даем глобально уникальный, чтобы горизонтали не проходили через чужие ноды.
+      const nodesForY = nodes
+        .slice()
+        .sort((a, b) => d3.ascending(a.level, b.level) || d3.ascending(a.id, b.id));
+      nodesForY.forEach((node, rowIdx) => {
+        node.x = margin.left + node.level * levelGap;
+        node.y = margin.top + rowIdx * (nodeH + rowGap);
       });
 
       const parentsByLevel = d3.group(
@@ -302,8 +302,6 @@
           .attr("fill", color(parentId));
       });
 
-      const laneY = (laneIndex) => margin.top - 16 - laneIndex * laneGap;
-
       // Стабильный порядок для трассировки, чтобы форма была предсказуемой.
       const linksSorted = links
         .slice()
@@ -321,7 +319,7 @@
         .attr("stroke", (d) => color(d.source))
         .attr("stroke-width", 2)
         .attr("marker-end", (d) => `url(#arrow_${d.source.replace(/[^a-zA-Z0-9_-]/g, "_")})`)
-        .attr("d", (d, i) => {
+        .attr("d", (d) => {
           const s = nodeById.get(d.source);
           const t = nodeById.get(d.target);
 
@@ -331,21 +329,13 @@
           const ty = t.y + nodeH / 2;
 
           const busX = parentBusX.get(d.source) || sx + 20;
-          const preTargetX = tx - 16;
-          const routeY = laneY(i);
-
-          // Ортогональная трасса в 5 отрезков:
-          // 1) к родительской магистрали (busX),
-          // 2) вверх в коридор,
-          // 3) горизонталь по коридору,
-          // 4) вниз к цели,
-          // 5) короткий вход в ноду-цель.
+          // Ортогональная трасса с 2 изломами:
+          // 1) излом напротив выхода,
+          // 2) излом напротив входа.
           return [
             `M${sx},${sy}`,
             `L${busX},${sy}`,
-            `L${busX},${routeY}`,
-            `L${preTargetX},${routeY}`,
-            `L${preTargetX},${ty}`,
+            `L${busX},${ty}`,
             `L${tx},${ty}`
           ].join(" ");
         });
