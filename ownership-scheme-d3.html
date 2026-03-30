@@ -344,6 +344,22 @@
         });
       }
 
+      function buildRoute(link) {
+        const s = nodeById.get(link.source);
+        const t = nodeById.get(link.target);
+        const sx = s.x + nodeW;
+        const sy = s.y + nodeH / 2;
+        const tx = t.x;
+        const ty = targetPortYByLinkId.get(link.id) ?? t.y + nodeH / 2;
+        const busX = parentBusX.get(link.source) || sx + 20;
+        return { sx, sy, busX, tx, ty };
+      }
+
+      const routeByLinkId = new Map();
+      linksSorted.forEach((link) => {
+        routeByLinkId.set(link.id, buildRoute(link));
+      });
+
       root
         .append("g")
         .selectAll("path")
@@ -354,15 +370,7 @@
         .attr("stroke-width", 2)
         .attr("marker-end", (d) => `url(#arrow_${d.source.replace(/[^a-zA-Z0-9_-]/g, "_")})`)
         .attr("d", (d) => {
-          const s = nodeById.get(d.source);
-          const t = nodeById.get(d.target);
-
-          const sx = s.x + nodeW;
-          const sy = s.y + nodeH / 2;
-          const tx = t.x;
-          const ty = targetPortYByLinkId.get(d.id) ?? t.y + nodeH / 2;
-
-          const busX = parentBusX.get(d.source) || sx + 20;
+          const { sx, sy, busX, tx, ty } = routeByLinkId.get(d.id);
           // Ортогональная трасса с 2 изломами:
           // 1) излом напротив выхода,
           // 2) излом напротив входа.
@@ -373,6 +381,68 @@
             `L${tx},${ty}`
           ].join(" ");
         });
+
+      // Рендер "мостиков" на пересечениях:
+      // горизонтальный сегмент визуально проходит поверх вертикального.
+      const horizontalSegments = [];
+      const verticalSegments = [];
+      linksSorted.forEach((link) => {
+        const r = routeByLinkId.get(link.id);
+        const stroke = color(link.source);
+        horizontalSegments.push({ linkId: link.id, y: r.sy, x1: r.sx, x2: r.busX, stroke });
+        horizontalSegments.push({ linkId: link.id, y: r.ty, x1: r.busX, x2: r.tx, stroke });
+        verticalSegments.push({ linkId: link.id, x: r.busX, y1: r.sy, y2: r.ty });
+      });
+
+      const eps = 0.5;
+      const bridgeHalf = 5;
+      const bridges = [];
+      const bridgeKeys = new Set();
+      horizontalSegments.forEach((h) => {
+        const hMinX = Math.min(h.x1, h.x2);
+        const hMaxX = Math.max(h.x1, h.x2);
+        verticalSegments.forEach((v) => {
+          if (h.linkId === v.linkId) return;
+          const vMinY = Math.min(v.y1, v.y2);
+          const vMaxY = Math.max(v.y1, v.y2);
+          const crossX = v.x;
+          const crossY = h.y;
+          const insideHorizontal = crossX > hMinX + eps && crossX < hMaxX - eps;
+          const insideVertical = crossY > vMinY + eps && crossY < vMaxY - eps;
+          if (!insideHorizontal || !insideVertical) return;
+          const key = `${Math.round(crossX)}:${Math.round(crossY)}:${h.stroke}`;
+          if (bridgeKeys.has(key)) return;
+          bridgeKeys.add(key);
+          bridges.push({ x: crossX, y: crossY, stroke: h.stroke });
+        });
+      });
+
+      const bridgeG = root.append("g").attr("pointer-events", "none");
+      bridgeG
+        .selectAll("line.bridge-clear")
+        .data(bridges)
+        .join("line")
+        .attr("class", "bridge-clear")
+        .attr("x1", (d) => d.x - bridgeHalf)
+        .attr("x2", (d) => d.x + bridgeHalf)
+        .attr("y1", (d) => d.y)
+        .attr("y2", (d) => d.y)
+        .attr("stroke", "#ffffff")
+        .attr("stroke-width", 6)
+        .attr("stroke-linecap", "round");
+
+      bridgeG
+        .selectAll("line.bridge-top")
+        .data(bridges)
+        .join("line")
+        .attr("class", "bridge-top")
+        .attr("x1", (d) => d.x - bridgeHalf)
+        .attr("x2", (d) => d.x + bridgeHalf)
+        .attr("y1", (d) => d.y)
+        .attr("y2", (d) => d.y)
+        .attr("stroke", (d) => d.stroke)
+        .attr("stroke-width", 2.3)
+        .attr("stroke-linecap", "round");
 
       root
         .append("g")
