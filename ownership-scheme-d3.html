@@ -232,7 +232,7 @@
       const levels = d3.group(nodes, (d) => d.level);
       const levelKeys = Array.from(levels.keys()).sort((a, b) => a - b);
       const maxLevel = d3.max(levelKeys) || 0;
-      const totalRows = Math.max(1, nodes.length);
+      const maxRows = d3.max(levelKeys.map((lvl) => levels.get(lvl).length)) || 1;
 
       const margin = {
         top: 40,
@@ -242,7 +242,7 @@
       };
 
       const width = margin.left + margin.right + (maxLevel + 1) * levelGap + nodeW;
-      const height = margin.top + margin.bottom + totalRows * (nodeH + rowGap);
+      const height = margin.top + margin.bottom + maxRows * (nodeH + rowGap);
 
       const svg = chart
         .append("svg")
@@ -254,13 +254,14 @@
       const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
       // Раскладка нод:
-      // x зависит от level, а y даем глобально уникальный, чтобы горизонтали не проходили через чужие ноды.
-      const nodesForY = nodes
-        .slice()
-        .sort((a, b) => d3.ascending(a.level, b.level) || d3.ascending(a.id, b.id));
-      nodesForY.forEach((node, rowIdx) => {
-        node.x = margin.left + node.level * levelGap;
-        node.y = margin.top + rowIdx * (nodeH + rowGap);
+      // x зависит от level, y считается внутри каждого уровня отдельно,
+      // чтобы новые уровни не "уезжали" ниже предыдущих.
+      levelKeys.forEach((lvl) => {
+        const levelNodes = levels.get(lvl).slice().sort((a, b) => d3.ascending(a.id, b.id));
+        levelNodes.forEach((node, rowIdx) => {
+          node.x = margin.left + node.level * levelGap;
+          node.y = margin.top + rowIdx * (nodeH + rowGap);
+        });
       });
 
       const parentsByLevel = d3.group(
