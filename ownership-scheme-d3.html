@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Динамичная схема владения (D3.js)</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --text: #0f172a;
+      --muted: #475569;
+      --border: #cbd5e1;
+      --node-fill: #ffffff;
+      --node-stroke: #64748b;
+    }
+
+    * {
+      box-sizing: border-box;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+    }
+
+    .panel {
+      max-width: 1300px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .hint {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    #chart {
+      width: 100%;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: linear-gradient(#ffffff, #fcfdff);
+    }
+
+    .node-label {
+      font-size: 12px;
+      font-weight: 700;
+      fill: #0f172a;
+      dominant-baseline: middle;
+      pointer-events: none;
+    }
+
+    .node-meta {
+      font-size: 11px;
+      fill: #334155;
+      dominant-baseline: hanging;
+      pointer-events: none;
+    }
+
+    .link-share {
+      font-size: 11px;
+      fill: #1e293b;
+      paint-order: stroke;
+      stroke: #ffffff;
+      stroke-width: 3px;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+
+    .legend {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+      color: #1e293b;
+    }
+
+    .legend-item {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>Схема владения (D3.js, 1 файл)</h1>
+    <p class="hint">
+      Ноды идут слева направо по <b>level_организации</b>. Линки ортогональные, с цветом по родителю и стрелками.
+      Для каждого родителя выделена уникальная X-координата вертикальной магистрали. Метки в поле <b>флаги</b> меняют стиль нод.
+    </p>
+    <div id="chart"></div>
+    <div class="legend">
+      <span class="legend-item">bank</span>
+      <span class="legend-item">offshore</span>
+      <span class="legend-item">public</span>
+      <span class="legend-item">state</span>
+      <span class="legend-item">sanctioned</span>
+    </div>
+  </div>
+
+  <script>
+    // Тестовые данные: 10 записей, 1 запись = 1 связь.
+    // Формат: id_владельца, id_организации, level_организации, доля_владения, флаги.
+    const testData = [
+      { id_владельца: "HOLDING_A", id_организации: "ORG_B", level_организации: 1, доля_владения: 60, флаги: ["state"] },
+      { id_владельца: "HOLDING_A", id_организации: "ORG_C", level_организации: 1, доля_владения: 40, флаги: ["public"] },
+      { id_владельца: "ORG_B", id_организации: "ORG_D", level_организации: 2, доля_владения: 51, флаги: ["bank"] },
+      { id_владельца: "ORG_B", id_организации: "ORG_E", level_организации: 2, доля_владения: 49, флаги: ["offshore"] },
+      { id_владельца: "ORG_C", id_организации: "ORG_F", level_организации: 2, доля_владения: 70, флаги: ["public"] },
+      { id_владельца: "ORG_C", id_организации: "ORG_G", level_организации: 2, доля_владения: 30, флаги: ["sanctioned"] },
+      { id_владельца: "ORG_D", id_организации: "ORG_H", level_организации: 3, доля_владения: 100, флаги: ["bank"] },
+      { id_владельца: "ORG_E", id_организации: "ORG_I", level_организации: 3, доля_владения: 75, флаги: ["offshore"] },
+      { id_владельца: "ORG_F", id_организации: "ORG_J", level_организации: 3, доля_владения: 55, флаги: ["public"] },
+      { id_владельца: "ORG_G", id_организации: "ORG_K", level_организации: 3, доля_владения: 25, флаги: ["sanctioned", "offshore"] }
+    ];
+
+    const LABEL_STYLES = {
+      bank: { fill: "#e8f1ff", stroke: "#2563eb", dash: null },
+      offshore: { fill: "#fff4e8", stroke: "#ea580c", dash: "6 3" },
+      public: { fill: "#eefdf4", stroke: "#16a34a", dash: null },
+      state: { fill: "#eef2ff", stroke: "#4f46e5", dash: null },
+      sanctioned: { fill: "#fef2f2", stroke: "#dc2626", dash: null }
+    };
+
+    function computeNodeStyle(labels) {
+      const style = { fill: "var(--node-fill)", stroke: "var(--node-stroke)", dash: null };
+      for (const label of labels) {
+        if (LABEL_STYLES[label]) {
+          Object.assign(style, LABEL_STYLES[label]);
+        }
+      }
+      return style;
+    }
+
+    function buildGraph(rows) {
+      const nodeMap = new Map();
+
+      function ensureNode(id) {
+        if (!nodeMap.has(id)) {
+          nodeMap.set(id, { id, level: undefined, labels: new Set(), x: 0, y: 0 });
+        }
+        return nodeMap.get(id);
+      }
+
+      rows.forEach((row) => {
+        const owner = ensureNode(row.id_владельца);
+        const org = ensureNode(row.id_организации);
+        org.level = row.level_организации;
+        (row.флаги || []).forEach((tag) => org.labels.add(tag));
+        owner.outgoing = (owner.outgoing || 0) + 1;
+      });
+
+      let changed = true;
+      while (changed) {
+        changed = false;
+        rows.forEach((row) => {
+          const owner = nodeMap.get(row.id_владельца);
+          const childLevel = row.level_организации;
+          if (owner.level === undefined) {
+            owner.level = childLevel - 1;
+            changed = true;
+          } else {
+            const better = Math.min(owner.level, childLevel - 1);
+            if (better !== owner.level) {
+              owner.level = better;
+              changed = true;
+            }
+          }
+        });
+      }
+
+      let minLevel = Infinity;
+      nodeMap.forEach((n) => {
+        if (n.level === undefined) n.level = 0;
+        minLevel = Math.min(minLevel, n.level);
+      });
+
+      if (minLevel < 0) {
+        nodeMap.forEach((n) => {
+          n.level -= minLevel;
+        });
+      }
+
+      const nodes = Array.from(nodeMap.values()).map((n) => ({
+        ...n,
+        labels: Array.from(n.labels)
+      }));
+
+      const links = rows.map((row, idx) => ({
+        id: `link_${idx + 1}`,
+        source: row.id_владельца,
+        target: row.id_организации,
+        share: row.доля_владения
+      }));
+
+      return { nodes, links };
+    }
+
+    function renderOwnershipScheme(rows) {
+      const { nodes, links } = buildGraph(rows);
+
+      const chart = d3.select("#chart");
+      chart.selectAll("*").remove();
+
+      const nodeW = 170;
+      const nodeH = 56;
+      const levelGap = 260;
+      const rowGap = 28;
+      const laneGap = 12;
+      const topLanes = links.length + 2;
+
+      const levels = d3.group(nodes, (d) => d.level);
+      const levelKeys = Array.from(levels.keys()).sort((a, b) => a - b);
+      const maxLevel = d3.max(levelKeys) || 0;
+      const maxRows = d3.max(levelKeys.map((k) => levels.get(k).length)) || 1;
+
+      const margin = {
+        top: 30 + topLanes * laneGap,
+        right: 80,
+        bottom: 50,
+        left: 40
+      };
+
+      const width = margin.left + margin.right + (maxLevel + 1) * levelGap + nodeW;
+      const height = margin.top + margin.bottom + maxRows * (nodeH + rowGap);
+
+      const svg = chart
+        .append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+      const root = svg.append("g");
+
+      const nodeById = new Map(nodes.map((n) => [n.id, n]));
+
+      // Раскладка нод по уровням (x зависит от level, y варьируется в рамках колонки).
+      levelKeys.forEach((level) => {
+        const list = levels.get(level).sort((a, b) => d3.ascending(a.id, b.id));
+        list.forEach((node, i) => {
+          node.x = margin.left + level * levelGap;
+          node.y = margin.top + i * (nodeH + rowGap);
+        });
+      });
+
+      const parentsByLevel = d3.group(
+        links.map((l) => l.source),
+        (id) => nodeById.get(id).level
+      );
+
+      const parentBusX = new Map();
+
+      // Для каждого родителя задаем уникальный X (магистраль), где меняется Y.
+      for (const [lvl, parentIdsRaw] of parentsByLevel.entries()) {
+        const parentIds = Array.from(new Set(parentIdsRaw)).sort(d3.ascending);
+        const rightEdge = margin.left + lvl * levelGap + nodeW;
+        const nextColStart = margin.left + (lvl + 1) * levelGap;
+        const leftBound = rightEdge + 16;
+        const rightBound = Math.max(leftBound + 10, nextColStart - 20);
+        const span = Math.max(10, rightBound - leftBound);
+        const step = span / (parentIds.length + 1);
+
+        parentIds.forEach((pid, idx) => {
+          parentBusX.set(pid, leftBound + step * (idx + 1));
+        });
+      }
+
+      const color = d3.scaleOrdinal(d3.schemeTableau10);
+      color.domain(Array.from(new Set(links.map((l) => l.source))));
+
+      const defs = svg.append("defs");
+      color.domain().forEach((parentId) => {
+        const safeId = parentId.replace(/[^a-zA-Z0-9_-]/g, "_");
+        defs
+          .append("marker")
+          .attr("id", `arrow_${safeId}`)
+          .attr("viewBox", "0 -5 10 10")
+          .attr("refX", 10)
+          .attr("refY", 0)
+          .attr("markerWidth", 7)
+          .attr("markerHeight", 7)
+          .attr("orient", "auto")
+          .append("path")
+          .attr("d", "M0,-5L10,0L0,5")
+          .attr("fill", color(parentId));
+      });
+
+      const laneY = (laneIndex) => margin.top - 16 - laneIndex * laneGap;
+
+      // Стабильный порядок для трассировки, чтобы форма была предсказуемой.
+      const linksSorted = links
+        .slice()
+        .sort((a, b) =>
+          d3.ascending(a.source, b.source) ||
+          d3.ascending(nodeById.get(a.target).y, nodeById.get(b.target).y)
+        );
+
+      root
+        .append("g")
+        .selectAll("path")
+        .data(linksSorted)
+        .join("path")
+        .attr("fill", "none")
+        .attr("stroke", (d) => color(d.source))
+        .attr("stroke-width", 2)
+        .attr("marker-end", (d) => `url(#arrow_${d.source.replace(/[^a-zA-Z0-9_-]/g, "_")})`)
+        .attr("d", (d, i) => {
+          const s = nodeById.get(d.source);
+          const t = nodeById.get(d.target);
+
+          const sx = s.x + nodeW;
+          const sy = s.y + nodeH / 2;
+          const tx = t.x;
+          const ty = t.y + nodeH / 2;
+
+          const busX = parentBusX.get(d.source) || sx + 20;
+          const preTargetX = tx - 16;
+          const routeY = laneY(i);
+
+          // Ортогональная трасса в 5 отрезков:
+          // 1) к родительской магистрали (busX),
+          // 2) вверх в коридор,
+          // 3) горизонталь по коридору,
+          // 4) вниз к цели,
+          // 5) короткий вход в ноду-цель.
+          return [
+            `M${sx},${sy}`,
+            `L${busX},${sy}`,
+            `L${busX},${routeY}`,
+            `L${preTargetX},${routeY}`,
+            `L${preTargetX},${ty}`,
+            `L${tx},${ty}`
+          ].join(" ");
+        });
+
+      root
+        .append("g")
+        .selectAll("text")
+        .data(linksSorted)
+        .join("text")
+        .attr("class", "link-share")
+        .attr("x", (d) => nodeById.get(d.target).x - 48)
+        .attr("y", (d) => nodeById.get(d.target).y + nodeH / 2 - 6)
+        .text((d) => `${d.share}%`);
+
+      const nodeG = root
+        .append("g")
+        .selectAll("g")
+        .data(nodes)
+        .join("g")
+        .attr("transform", (d) => `translate(${d.x},${d.y})`);
+
+      nodeG
+        .append("rect")
+        .attr("width", nodeW)
+        .attr("height", nodeH)
+        .attr("rx", 8)
+        .attr("ry", 8)
+        .attr("fill", (d) => computeNodeStyle(d.labels).fill)
+        .attr("stroke", (d) => computeNodeStyle(d.labels).stroke)
+        .attr("stroke-width", 1.5)
+        .attr("stroke-dasharray", (d) => computeNodeStyle(d.labels).dash);
+
+      nodeG
+        .append("text")
+        .attr("class", "node-label")
+        .attr("x", 10)
+        .attr("y", 18)
+        .text((d) => d.id);
+
+      nodeG
+        .append("text")
+        .attr("class", "node-meta")
+        .attr("x", 10)
+        .attr("y", 32)
+        .text((d) => `level: ${d.level}${d.labels.length ? ` | ${d.labels.join(", ")}` : ""}`);
+    }
+
+    // Для встраивания: просто вызовите renderOwnershipScheme(yourData).
+    renderOwnershipScheme(testData);
+    window.renderOwnershipScheme = renderOwnershipScheme;
+  </script>
+</body>
+</html>
