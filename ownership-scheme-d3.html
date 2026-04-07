@@ -132,6 +132,8 @@
       { id_владельца: "ORG_G", id_организации: "ORG_K", level_организации: 3, доля_владения: 25, флаги: ["sanctioned", "offshore"] }
     ];
 
+    // Словарь визуальных пресетов по флагам.
+    // Если у ноды несколько флагов, ниже в коде применится "последний встретившийся".
     const LABEL_STYLES = {
       bank: { fill: "#e8f1ff", stroke: "#2563eb", dash: null },
       offshore: { fill: "#fff4e8", stroke: "#ea580c", dash: "6 3" },
@@ -140,6 +142,7 @@
       sanctioned: { fill: "#fef2f2", stroke: "#dc2626", dash: null }
     };
 
+    // Сводим набор флагов ноды в итоговый стиль прямоугольника.
     function computeNodeStyle(labels) {
       const style = { fill: "var(--node-fill)", stroke: "var(--node-stroke)", dash: null };
       for (const label of labels) {
@@ -150,9 +153,11 @@
       return style;
     }
 
+    // Преобразует табличные связи во внутренний граф: { nodes, links }.
     function buildGraph(rows) {
       const nodeMap = new Map();
 
+      // Гарантирует наличие вершины в карте, чтобы не дублировать код создания.
       function ensureNode(id) {
         if (!nodeMap.has(id)) {
           nodeMap.set(id, { id, level: undefined, labels: new Set(), x: 0, y: 0 });
@@ -160,6 +165,8 @@
         return nodeMap.get(id);
       }
 
+      // 1-й проход: создаем вершины, фиксируем известные уровни "детей",
+      // собираем метки и статистику исходящих связей.
       rows.forEach((row) => {
         const owner = ensureNode(row.id_владельца);
         const org = ensureNode(row.id_организации);
@@ -168,6 +175,8 @@
         owner.outgoing = (owner.outgoing || 0) + 1;
       });
 
+      // 2-й проход (до стабилизации): выводим уровни владельцев как childLevel - 1.
+      // Нужен цикл, т.к. часть owner-уровней может определиться не сразу.
       let changed = true;
       while (changed) {
         changed = false;
@@ -187,6 +196,7 @@
         });
       }
 
+      // Нормализуем уровни так, чтобы минимальный уровень стал 0.
       let minLevel = Infinity;
       nodeMap.forEach((n) => {
         if (n.level === undefined) n.level = 0;
@@ -204,6 +214,7 @@
         labels: Array.from(n.labels)
       }));
 
+      // Ссылки храним отдельно; id нужен для стабильных lookup-структур.
       const links = rows.map((row, idx) => ({
         id: `link_${idx + 1}`,
         source: row.id_владельца,
@@ -214,17 +225,21 @@
       return { nodes, links };
     }
 
+    // Полный рендер схемы: раскладка -> маршруты -> SVG-элементы.
     function renderOwnershipScheme(rows) {
       const { nodes, links } = buildGraph(rows);
 
       const chart = d3.select("#chart");
+      // Рендер идемпотентный: каждый вызов строит схему с нуля.
       chart.selectAll("*").remove();
 
       const nodeW = 170;
       const nodeH = 56;
       const levelGap = 340; // Увеличенный интервал между слоями уровней.
-      const rowGap = 28;
+      const connectedRowGap = 28; // Коридор, по которому идет хотя бы один линк.
+      const disconnectedRowGap = 10; // Плотнее сжимаем "пустые" промежутки между строками.
 
+      // Группировка по колонкам (level): X фиксирован по уровню, Y — по "строке".
       const levels = d3.group(nodes, (d) => d.level);
       const levelKeys = Array.from(levels.keys()).sort((a, b) => a - b);
       const maxLevel = d3.max(levelKeys) || 0;
@@ -237,8 +252,69 @@
         left: 40
       };
 
+      // Быстрый доступ к узлам из link.source / link.target.
+      const nodeById = new Map(nodes.map((n) => [n.id, n]));
+
+      // Предварительная раскладка: присваиваем X и индекс строки row.
+      // Реальный Y посчитаем позже, когда узнаем высоту каждого "коридора" между строками.
+      levelKeys.forEach((level) => {
+        const list = levels.get(level).sort((a, b) => d3.ascending(a.id, b.id));
+        list.forEach((node, i) => {
+          node.x = margin.left + level * levelGap;
+          node.row = i;
+          node.y = margin.top;
+        });
+      });
+
+      // Стабильный порядок для трассировки, чтобы форма была предсказуемой.
+      const linksSorted = links
+        .slice()
+        .sort((a, b) =>
+          d3.ascending(a.source, b.source) ||
+          d3.ascending(nodeById.get(a.target).row, nodeById.get(b.target).row)
+        );
+
+      // Выбираем "коридор" (gap между строками), по которому пойдет горизонтальный сегмент линка.
+      function pickRouteGapIndex(sourceRow, targetRow, linkIndex) {
+        if (maxRows <= 1) return null;
+        if (targetRow > sourceRow) return Math.max(sourceRow, targetRow - 1);
+        if (targetRow < sourceRow) return Math.min(sourceRow - 1, targetRow);
+
+        const below = sourceRow <= maxRows - 2 ? sourceRow : null;
+        const above = sourceRow > 0 ? sourceRow - 1 : null;
+        const preferBelow = linkIndex % 2 === 0;
+        return preferBelow ? (below ?? above) : (above ?? below);
+      }
+
+      // По умолчанию все межстрочные коридоры сжаты.
+      // Если коридор используется хотя бы одним линком — расширяем его.
+      const gapSizeByIndex = Array.from(
+        { length: Math.max(0, maxRows - 1) },
+        () => disconnectedRowGap
+      );
+      linksSorted.forEach((link, i) => {
+        const sourceRow = nodeById.get(link.source).row;
+        const targetRow = nodeById.get(link.target).row;
+        const gapIdx = pickRouteGapIndex(sourceRow, targetRow, i);
+        if (gapIdx !== null) gapSizeByIndex[gapIdx] = connectedRowGap;
+      });
+
+      // Префиксная сумма по высотам строк/коридоров -> фактический top для каждой строки.
+      const rowTopByIndex = [];
+      if (maxRows > 0) {
+        rowTopByIndex[0] = margin.top;
+        for (let row = 1; row < maxRows; row += 1) {
+          rowTopByIndex[row] = rowTopByIndex[row - 1] + nodeH + gapSizeByIndex[row - 1];
+        }
+      }
+      nodes.forEach((node) => {
+        node.y = rowTopByIndex[node.row] ?? margin.top;
+      });
+
       const width = margin.left + margin.right + (maxLevel + 1) * levelGap + nodeW;
-      const height = margin.top + margin.bottom + maxRows * (nodeH + rowGap);
+      const height = maxRows
+        ? rowTopByIndex[maxRows - 1] + nodeH + margin.bottom
+        : margin.top + nodeH + margin.bottom;
 
       const svg = chart
         .append("svg")
@@ -247,22 +323,13 @@
 
       const root = svg.append("g");
 
-      const nodeById = new Map(nodes.map((n) => [n.id, n]));
-
-      // Раскладка нод по уровням (x зависит от level, y варьируется в рамках колонки).
-      levelKeys.forEach((level) => {
-        const list = levels.get(level).sort((a, b) => d3.ascending(a.id, b.id));
-        list.forEach((node, i) => {
-          node.x = margin.left + level * levelGap;
-          node.y = margin.top + i * (nodeH + rowGap);
-        });
-      });
-
+      // Для каждого уровня группируем родителей, откуда выходят связи в следующий столбец.
       const parentsByLevel = d3.group(
         links.map((l) => l.source),
         (id) => nodeById.get(id).level
       );
 
+      // X-координата "магистрали" родителя (вертикальный сегмент перед переходом к цели).
       const parentBusX = new Map();
 
       // Для каждого родителя задаем уникальный X (магистраль), где меняется Y.
@@ -280,9 +347,11 @@
         });
       }
 
+      // Цвет линки наследуют от parent/source.
       const color = d3.scaleOrdinal(d3.schemeTableau10);
       color.domain(Array.from(new Set(links.map((l) => l.source))));
 
+      // Отдельный маркер-стрелка на каждый цвет источника.
       const defs = svg.append("defs");
       color.domain().forEach((parentId) => {
         const safeId = parentId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -300,17 +369,10 @@
           .attr("fill", color(parentId));
       });
 
-      // Стабильный порядок для трассировки, чтобы форма была предсказуемой.
-      const linksSorted = links
-        .slice()
-        .sort((a, b) =>
-          d3.ascending(a.source, b.source) ||
-          d3.ascending(nodeById.get(a.target).y, nodeById.get(b.target).y)
-        );
-
       // Уникальный X подхода к цели для входящих в одну и ту же ноду:
       // это убирает наложение вертикальных "опусканий" у цели.
       const approachXByLinkId = new Map();
+      // Раскладываем входы в одну цель по разным X, чтобы вертикальные сегменты не совпадали.
       const incomingByTarget = d3.group(linksSorted, (d) => d.target);
       for (const [targetId, incoming] of incomingByTarget.entries()) {
         const targetX = nodeById.get(targetId).x;
@@ -322,36 +384,22 @@
           });
       }
 
-      const rowStep = nodeH + rowGap;
-      const toRowIndex = (y) => {
-        const idx = Math.round((y - margin.top - nodeH / 2) / rowStep);
-        return Math.max(0, Math.min(maxRows - 1, idx));
+      // Центральная Y-координата выбранного межстрочного коридора.
+      const gapCenterY = (gapIdx) => {
+        const rowTop = rowTopByIndex[gapIdx] ?? margin.top;
+        const gap = gapSizeByIndex[gapIdx] ?? disconnectedRowGap;
+        return rowTop + nodeH + gap / 2;
       };
-      const gapCenterY = (gapIdx) => margin.top + gapIdx * rowStep + nodeH + rowGap / 2;
 
       // Выбор маршрута по Y:
       // если цель ниже — линия идет вниз, если выше — вверх (без принудительного ухода наверх).
-      function pickRouteY(sourceY, targetY, linkIndex) {
-        const sRow = toRowIndex(sourceY);
-        const tRow = toRowIndex(targetY);
-
-        if (tRow > sRow) {
-          const gapIdx = Math.max(sRow, tRow - 1);
-          return gapCenterY(gapIdx);
-        }
-
-        if (tRow < sRow) {
-          const gapIdx = Math.min(sRow - 1, tRow);
-          return gapCenterY(gapIdx);
-        }
-
-        // Если в одной строке, требуется небольшой обход: чередуем вверх/вниз.
-        const below = sRow <= maxRows - 2 ? gapCenterY(sRow) : null;
-        const above = sRow > 0 ? gapCenterY(sRow - 1) : null;
-        const preferBelow = linkIndex % 2 === 0;
-        return preferBelow ? (below ?? above ?? sourceY) : (above ?? below ?? sourceY);
+      function pickRouteY(sourceRow, targetRow, linkIndex, fallbackY) {
+        const gapIdx = pickRouteGapIndex(sourceRow, targetRow, linkIndex);
+        if (gapIdx === null) return fallbackY;
+        return gapCenterY(gapIdx);
       }
 
+      // Отрисовка связей ортогональными полилиниями.
       root
         .append("g")
         .selectAll("path")
@@ -372,7 +420,7 @@
 
           const busX = parentBusX.get(d.source) || sx + 20;
           const preTargetX = approachXByLinkId.get(d.id) || tx - 18;
-          const routeY = pickRouteY(sy, ty, i);
+          const routeY = pickRouteY(s.row, t.row, i, sy);
 
           // Ортогональная трасса в 5 отрезков:
           // 1) к родительской магистрали (busX),
@@ -390,6 +438,7 @@
           ].join(" ");
         });
 
+      // Подписи долей владения рядом с целевой нодой.
       root
         .append("g")
         .selectAll("text")
@@ -400,6 +449,7 @@
         .attr("y", (d) => nodeById.get(d.target).y + nodeH / 2 - 6)
         .text((d) => `${d.share}%`);
 
+      // Группа для каждой ноды (прямоугольник + 2 текстовые строки).
       const nodeG = root
         .append("g")
         .selectAll("g")
