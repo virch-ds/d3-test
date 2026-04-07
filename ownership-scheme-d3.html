@@ -223,7 +223,8 @@
       const nodeW = 170;
       const nodeH = 56;
       const levelGap = 340; // Увеличенный интервал между слоями уровней.
-      const rowGap = 28;
+      const connectedRowGap = 28; // Коридор, по которому идет хотя бы один линк.
+      const disconnectedRowGap = 10; // Плотнее сжимаем "пустые" промежутки между строками.
 
       const levels = d3.group(nodes, (d) => d.level);
       const levelKeys = Array.from(levels.keys()).sort((a, b) => a - b);
@@ -237,16 +238,6 @@
         left: 40
       };
 
-      const width = margin.left + margin.right + (maxLevel + 1) * levelGap + nodeW;
-      const height = margin.top + margin.bottom + maxRows * (nodeH + rowGap);
-
-      const svg = chart
-        .append("svg")
-        .attr("width", width)
-        .attr("height", height);
-
-      const root = svg.append("g");
-
       const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
       // Раскладка нод по уровням (x зависит от level, y варьируется в рамках колонки).
@@ -254,9 +245,63 @@
         const list = levels.get(level).sort((a, b) => d3.ascending(a.id, b.id));
         list.forEach((node, i) => {
           node.x = margin.left + level * levelGap;
-          node.y = margin.top + i * (nodeH + rowGap);
+          node.row = i;
+          node.y = margin.top;
         });
       });
+
+      // Стабильный порядок для трассировки, чтобы форма была предсказуемой.
+      const linksSorted = links
+        .slice()
+        .sort((a, b) =>
+          d3.ascending(a.source, b.source) ||
+          d3.ascending(nodeById.get(a.target).row, nodeById.get(b.target).row)
+        );
+
+      function pickRouteGapIndex(sourceRow, targetRow, linkIndex) {
+        if (maxRows <= 1) return null;
+        if (targetRow > sourceRow) return Math.max(sourceRow, targetRow - 1);
+        if (targetRow < sourceRow) return Math.min(sourceRow - 1, targetRow);
+
+        const below = sourceRow <= maxRows - 2 ? sourceRow : null;
+        const above = sourceRow > 0 ? sourceRow - 1 : null;
+        const preferBelow = linkIndex % 2 === 0;
+        return preferBelow ? (below ?? above) : (above ?? below);
+      }
+
+      const gapSizeByIndex = Array.from(
+        { length: Math.max(0, maxRows - 1) },
+        () => disconnectedRowGap
+      );
+      linksSorted.forEach((link, i) => {
+        const sourceRow = nodeById.get(link.source).row;
+        const targetRow = nodeById.get(link.target).row;
+        const gapIdx = pickRouteGapIndex(sourceRow, targetRow, i);
+        if (gapIdx !== null) gapSizeByIndex[gapIdx] = connectedRowGap;
+      });
+
+      const rowTopByIndex = [];
+      if (maxRows > 0) {
+        rowTopByIndex[0] = margin.top;
+        for (let row = 1; row < maxRows; row += 1) {
+          rowTopByIndex[row] = rowTopByIndex[row - 1] + nodeH + gapSizeByIndex[row - 1];
+        }
+      }
+      nodes.forEach((node) => {
+        node.y = rowTopByIndex[node.row] ?? margin.top;
+      });
+
+      const width = margin.left + margin.right + (maxLevel + 1) * levelGap + nodeW;
+      const height = maxRows
+        ? rowTopByIndex[maxRows - 1] + nodeH + margin.bottom
+        : margin.top + nodeH + margin.bottom;
+
+      const svg = chart
+        .append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+      const root = svg.append("g");
 
       const parentsByLevel = d3.group(
         links.map((l) => l.source),
@@ -300,14 +345,6 @@
           .attr("fill", color(parentId));
       });
 
-      // Стабильный порядок для трассировки, чтобы форма была предсказуемой.
-      const linksSorted = links
-        .slice()
-        .sort((a, b) =>
-          d3.ascending(a.source, b.source) ||
-          d3.ascending(nodeById.get(a.target).y, nodeById.get(b.target).y)
-        );
-
       // Уникальный X подхода к цели для входящих в одну и ту же ноду:
       // это убирает наложение вертикальных "опусканий" у цели.
       const approachXByLinkId = new Map();
@@ -322,34 +359,18 @@
           });
       }
 
-      const rowStep = nodeH + rowGap;
-      const toRowIndex = (y) => {
-        const idx = Math.round((y - margin.top - nodeH / 2) / rowStep);
-        return Math.max(0, Math.min(maxRows - 1, idx));
+      const gapCenterY = (gapIdx) => {
+        const rowTop = rowTopByIndex[gapIdx] ?? margin.top;
+        const gap = gapSizeByIndex[gapIdx] ?? disconnectedRowGap;
+        return rowTop + nodeH + gap / 2;
       };
-      const gapCenterY = (gapIdx) => margin.top + gapIdx * rowStep + nodeH + rowGap / 2;
 
       // Выбор маршрута по Y:
       // если цель ниже — линия идет вниз, если выше — вверх (без принудительного ухода наверх).
-      function pickRouteY(sourceY, targetY, linkIndex) {
-        const sRow = toRowIndex(sourceY);
-        const tRow = toRowIndex(targetY);
-
-        if (tRow > sRow) {
-          const gapIdx = Math.max(sRow, tRow - 1);
-          return gapCenterY(gapIdx);
-        }
-
-        if (tRow < sRow) {
-          const gapIdx = Math.min(sRow - 1, tRow);
-          return gapCenterY(gapIdx);
-        }
-
-        // Если в одной строке, требуется небольшой обход: чередуем вверх/вниз.
-        const below = sRow <= maxRows - 2 ? gapCenterY(sRow) : null;
-        const above = sRow > 0 ? gapCenterY(sRow - 1) : null;
-        const preferBelow = linkIndex % 2 === 0;
-        return preferBelow ? (below ?? above ?? sourceY) : (above ?? below ?? sourceY);
+      function pickRouteY(sourceRow, targetRow, linkIndex, fallbackY) {
+        const gapIdx = pickRouteGapIndex(sourceRow, targetRow, linkIndex);
+        if (gapIdx === null) return fallbackY;
+        return gapCenterY(gapIdx);
       }
 
       root
@@ -372,7 +393,7 @@
 
           const busX = parentBusX.get(d.source) || sx + 20;
           const preTargetX = approachXByLinkId.get(d.id) || tx - 18;
-          const routeY = pickRouteY(sy, ty, i);
+          const routeY = pickRouteY(s.row, t.row, i, sy);
 
           // Ортогональная трасса в 5 отрезков:
           // 1) к родительской магистрали (busX),
